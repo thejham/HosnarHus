@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101a2b">
+  <title>Environment Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root { color-scheme: dark; --bg:#0b1220; --panel:#121d30; --muted:#9aa9bf; --text:#eef4ff; --line:#26364e; --blue:#70a7ff; --mint:#5ee0bd; --amber:#ffca70; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:radial-gradient(ellipse at top left,#172944 0%,var(--bg) 48%); color:var(--text); font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; min-height:100vh; }
+    main { max-width:1100px; margin:auto; padding:28px 18px 42px; }
+    header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:24px; }
+    .eyebrow { color:var(--mint); text-transform:uppercase; letter-spacing:.14em; font-size:.76rem; font-weight:750; }
+    h1 { margin:.25rem 0; font-size:clamp(1.8rem,4vw,2.8rem); letter-spacing:-.04em; }
+    .subtitle { color:var(--muted); margin:0; }
+    .status { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--line); background:#111c2e; padding:9px 12px; border-radius:999px; color:var(--muted); font-size:.9rem; }
+    .dot { width:8px; height:8px; border-radius:50%; background:var(--amber); }
+    .dot.ok { background:var(--mint); }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+    .card { background:rgba(18,29,48,.92); border:1px solid var(--line); border-radius:20px; padding:20px; box-shadow:0 12px 30px #0002; min-width:0; }
+    .metric { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+    .label { color:var(--muted); font-weight:600; }
+    .value { font-size:clamp(2rem,5vw,3.3rem); font-weight:750; letter-spacing:-.055em; margin-top:8px; line-height:1.15; overflow-wrap:anywhere; }
+    .unit { font-size:1rem; color:var(--muted); letter-spacing:0; }
+    .icon { width:42px; height:42px; display:grid; place-items:center; border-radius:14px; font-size:1.25rem; background:#223553; }
+    .temperature .icon { color:var(--blue); } .humidity .icon { color:var(--mint); }
+    .chart-card { grid-column:1/-1; }
+    .chart-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+    h2 { font-size:1.05rem; margin:0; }
+    .controls { display:flex; gap:8px; flex-wrap:wrap; }
+    button, select { background:#1a2940; border:1px solid #334864; color:var(--text); border-radius:10px; padding:9px 12px; font:inherit; cursor:pointer; }
+    button:hover, select:hover { border-color:var(--blue); }
+    button.active { background:#29466e; border-color:var(--blue); }
+    .chart-wrap { position:relative; height:300px; }
+    .foot { color:var(--muted); font-size:.88rem; margin-top:18px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+    .error { display:none; margin-top:16px; padding:13px 15px; border:1px solid #7b4a3b; background:#3a241f; border-radius:12px; color:#ffd7c9; }
+    .hint { color:var(--muted); font-size:.9rem; }
+    a { color:#9fc4ff; }
+    @media (max-width:650px) { .grid { grid-template-columns:1fr; } .chart-card { grid-column:auto; } .chart-wrap { height:250px; } main { padding:22px 13px 32px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <div class="eyebrow">Remote sensor dashboard</div>
+      <h1>Environment Monitor</h1>
+      <p class="subtitle">Temperature and relative humidity, updated from your ESP32.</p>
+    </div>
+    <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">Waiting for data…</span></div>
+  </header>
+
+  <section class="grid">
+    <article class="card temperature">
+      <div class="metric">
+        <div>
+          <div class="label">Temperature</div>
+          <div class="value"><span id="tempValue">—</span> <span class="unit">°C</span></div>
+        </div>
+        <div class="icon" aria-hidden="true">♨</div>
+      </div>
+    </article>
+    <article class="card humidity">
+      <div class="metric">
+        <div>
+          <div class="label">Relative humidity</div>
+          <div class="value"><span id="humidityValue">—</span> <span class="unit">%</span></div>
+        </div>
+        <div class="icon" aria-hidden="true">◉</div>
+      </div>
+    </article>
+
+    <article class="card chart-card">
+      <div class="chart-head">
+        <h2>Temperature history</h2>
+        <div class="controls" role="group" aria-label="Chart time range">
+          <button data-range="24" class="active">24 hours</button>
+          <button data-range="168">7 days</button>
+          <button data-range="720">30 days</button>
+          <button data-range="all">All loaded</button>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="tempChart" aria-label="Temperature history chart"></canvas></div>
+    </article>
+
+    <article class="card chart-card">
+      <div class="chart-head">
+        <h2>Humidity history</h2>
+        <span class="hint">Relative humidity (%)</span>
+      </div>
+      <div class="chart-wrap"><canvas id="humidityChart" aria-label="Humidity history chart"></canvas></div>
+    </article>
+  </section>
+
+  <div id="errorBox" class="error" role="alert"></div>
+  <div class="foot">
+    <span>Last measurement: <strong id="lastUpdated">—</strong></span>
+    <span>Dashboard refreshes every 60 seconds · <a id="channelLink" href="https://thingspeak.com/" target="_blank" rel="noopener">Data source</a></span>
+  </div>
+  <p class="hint">Readings are supplied by the connected sensor. A delayed update can mean the ESP32, Wi-Fi, or cloud connection is offline.</p>
+</main>
+
+<script>
+  // SETUP: enter the ID of your PUBLIC ThingSpeak channel below.
+  // This starter version intentionally has no API keys in the website.
+  const CHANNEL_ID = "3558055";
+  const REFRESH_MS = 60000;
+  const MAX_RESULTS = 8000;
+
+  let allFeeds = [];
+  let currentRange = "24";
+  let tempChart, humidityChart;
+
+  const chartOptions = (label, color, suffix) => ({
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: { callbacks: { label: ctx => `${label}: ${ctx.parsed.y} ${suffix}` } }
+    },
+    scales: {
+      x: { ticks: { color: "#9aa9bf", maxTicksLimit: 7, maxRotation: 0 }, grid: { color: "#26364e" } },
+      y: { ticks: { color: "#9aa9bf" }, grid: { color: "#26364e" } }
+    }
+  });
+
+  function makeCharts() {
+    const tempCtx = document.getElementById("tempChart");
+    const humidityCtx = document.getElementById("humidityChart");
+    tempChart = new Chart(tempCtx, {
+      type: "line",
+      data: { labels: [], datasets: [{ label: "Temperature", data: [], borderColor: "#70a7ff", backgroundColor: "#70a7ff20", fill: true, pointRadius: 0, borderWidth: 2, tension: .22, spanGaps: true }] },
+      options: chartOptions("Temperature", "#70a7ff", "°C")
+    });
+    humidityChart = new Chart(humidityCtx, {
+      type: "line",
+      data: { labels: [], datasets: [{ label: "Humidity", data: [], borderColor: "#5ee0bd", backgroundColor: "#5ee0bd20", fill: true, pointRadius: 0, borderWidth: 2, tension: .22, spanGaps: true }] },
+      options: chartOptions("Humidity", "#5ee0bd", "%")
+    });
+  }
+
+  function setStatus(ok, message) {
+    document.getElementById("statusDot").classList.toggle("ok", ok);
+    document.getElementById("statusText").textContent = message;
+  }
+
+  function visibleFeeds() {
+    if (currentRange === "all") return allFeeds;
+    const hours = Number(currentRange);
+    const cutoff = Date.now() - hours * 60 * 60 * 1000;
+    return allFeeds.filter(f => new Date(f.created_at).getTime() >= cutoff);
+  }
+
+  function render() {
+    const feeds = visibleFeeds();
+    const labels = feeds.map(f => new Date(f.created_at).toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"}));
+    tempChart.data.labels = labels;
+    tempChart.data.datasets[0].data = feeds.map(f => f.field1 === null || f.field1 === "" ? null : Number(f.field1));
+    humidityChart.data.labels = labels;
+    humidityChart.data.datasets[0].data = feeds.map(f => f.field2 === null || f.field2 === "" ? null : Number(f.field2));
+    tempChart.update();
+    humidityChart.update();
+
+    const latest = [...allFeeds].reverse().find(f => f.field1 !== null && f.field1 !== "" || f.field2 !== null && f.field2 !== "");
+    if (latest) {
+      document.getElementById("tempValue").textContent = latest.field1 == null || latest.field1 === "" ? "—" : Number(latest.field1).toFixed(1);
+      document.getElementById("humidityValue").textContent = latest.field2 == null || latest.field2 === "" ? "—" : Number(latest.field2).toFixed(1);
+      document.getElementById("lastUpdated").textContent = new Date(latest.created_at).toLocaleString();
+    }
+  }
+
+  async function loadData() {
+    const errorBox = document.getElementById("errorBox");
+    if (!CHANNEL_ID || CHANNEL_ID === "YOUR_PUBLIC_CHANNEL_ID") {
+      setStatus(false, "Setup needed");
+      errorBox.style.display = "block";
+      errorBox.textContent = "Setup needed: edit this file and replace YOUR_PUBLIC_CHANNEL_ID with your ThingSpeak channel ID. The channel must be public for this no-key version.";
+      return;
+    }
+    try {
+      const url = `https://api.thingspeak.com/channels/${encodeURIComponent(CHANNEL_ID)}/feeds.json?results=${MAX_RESULTS}`;
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error(`ThingSpeak returned HTTP ${response.status}`);
+      const json = await response.json();
+      if (!Array.isArray(json.feeds)) throw new Error("The response did not contain channel readings.");
+      allFeeds = json.feeds.filter(f => f.created_at);
+      document.getElementById("channelLink").href = `https://thingspeak.com/channels/${encodeURIComponent(CHANNEL_ID)}`;
+      errorBox.style.display = "none";
+      if (!allFeeds.length) {
+        setStatus(false, "No readings yet");
+        errorBox.style.display = "block";
+        errorBox.textContent = "The channel is reachable, but it has no readings yet. Check that the ESP32 has uploaded data to Field 1 and Field 2.";
+      } else {
+        setStatus(true, "Data connected");
+        render();
+      }
+    } catch (err) {
+      setStatus(false, "Unable to load data");
+      errorBox.style.display = "block";
+      errorBox.textContent = `Could not load readings. Check the channel ID, confirm the channel is public, and try again. Details: ${err.message}`;
+    }
+  }
+
+  document.querySelectorAll("button[data-range]").forEach(button => {
+    button.addEventListener("click", () => {
+      currentRange = button.dataset.range;
+      document.querySelectorAll("button[data-range]").forEach(b => b.classList.toggle("active", b === button));
+      if (tempChart && humidityChart) render();
+    });
+  });
+
+  makeCharts();
+  loadData();
+  setInterval(loadData, REFRESH_MS);
+</script>
+</body>
+</html>
